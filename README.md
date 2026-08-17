@@ -4,9 +4,10 @@
 
 Auditable, file-first memory infrastructure for AI agents.
 
-An agent should not need to search its own archive before it can say, "I
-remember." The small set of facts and rules that matter at startup should
-already be present. Search should be reserved for details.
+When an agent wakes up, it doesn't know what it remembers. It has to search
+first, pull back a few results, before it can say, "I remember." This project
+separates two kinds of memory: the small set of facts and rules that matter at
+startup are loaded directly, and the details are left to search.
 
 Agent Memory Workbench is not another attempt to make retrieval the center of
 memory. It is a layered, auditable architecture for maintaining memory over
