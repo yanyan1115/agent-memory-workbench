@@ -41,7 +41,8 @@ memoryctl candidate --root ./memory \
   --body-file ./draft.md
 
 memoryctl promote --root ./memory \
-  inbox/public/example-note.md --to active
+  inbox/public/example-note.md --to active \
+  --reason 'Reviewed and approved'
 ```
 
 Use `--private` when creating a private candidate and `--to private` when
@@ -58,6 +59,36 @@ memoryctl index --root ./memory check
 memoryctl doctor --root ./memory
 ```
 
+Each hot-index bullet has a hard 200-character maximum. It should contain only
+a recognition hook and any safety boundary that must remain immediately
+visible. `doctor` rejects dead hot-index links and over-budget lines.
+
+## Tree Navigation And Links
+
+The navigation tree has several layers:
+
+```text
+MEMORY.md hot index
+    -> generated active/archive/private indexes
+    -> optional domain hub
+    -> individual memory
+    -> related memory through [[wiki-links]]
+```
+
+Generated area indexes guarantee complete lifecycle coverage. A domain hub is a
+normal memory that groups a coherent topic when that topic has a reliable
+trigger. Keep broad safety rules in the hot index instead of hiding them behind
+a hub.
+
+Memory bodies may link by canonical name and optional heading:
+
+```text
+Related: [[release-checklist]]
+Related: [[release-checklist#Rollback]]
+```
+
+`doctor` validates both the target and heading anchor.
+
 ## Archival
 
 Archival preserves history instead of deleting it:
@@ -70,6 +101,16 @@ memoryctl archive --root ./memory example-note \
 When a newer decision overrides an older one, preserve the old evidence and
 state the current policy near the top. Do not silently rewrite history.
 
+Use `memoryctl update --reason ...` for reasoned body changes. Lifecycle
+operations append timestamps, paths, reasons, and before/after body hashes to
+`.memory-workbench-audit.jsonl`; the audit contains no memory body. Manual
+editor changes cannot be intercepted, so use Git or another versioned storage
+layer when complete edit history is required.
+
+Archived memories remain searchable. Existing historical Markdown can be
+normalized to schema v1 and placed under `archive/`; there is no claim that
+absence from the archive proves an event never happened.
+
 ## Semantic Cache
 
 The semantic cache stores vectors and minimal identifiers, not plaintext body
@@ -78,3 +119,8 @@ deleted text cannot reuse a stale vector. A failed index build does not replace
 the previous complete generation.
 
 Lexical search reads current Markdown directly and works without a provider.
+
+`memsearch overlap` compares current compatible vectors across files to surface
+near-duplicate or conflicting memories. A high score is a review signal, not
+permission to delete: a policy record and an evidence record may intentionally
+describe the same event.

@@ -58,6 +58,12 @@ Skill descriptions can serve as a low-noise recall index for high-frequency,
 long-lived procedures. Keep the trigger visible in always-loaded instructions;
 do not bury the only reminder inside the skill it must trigger.
 
+Navigation is deliberately tree-shaped rather than one giant flat summary:
+the hot index points to generated lifecycle indexes or domain hubs; hubs point
+to complete topic-specific memories and skills; memories may link to one
+another with validated wiki links. A main skill can provide the entry trigger
+and route to smaller subskills without loading every procedure at startup.
+
 ## Multi-Host Model
 
 One host owns the physical backing filesystem. Every writer, including that

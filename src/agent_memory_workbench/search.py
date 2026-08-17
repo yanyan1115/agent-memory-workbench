@@ -246,6 +246,43 @@ def search(root: Path, query: str, *, directory: Path, provider: Provider | None
     return results
 
 
+def overlap(root: Path, *, directory: Path, include_private: bool, threshold: float,
+            limit: int, target: str | None, exclude: list[str], lock_timeout: float) -> list[dict]:
+    if not 0 < threshold <= 1:
+        raise MemoryError("--threshold must be in (0, 1]")
+    with memory_lock(root, exclusive=False, timeout=lock_timeout):
+        chunks = current_chunks(root, include_private)
+    current = {(chunk.path, chunk.index, chunk.sha): chunk for chunk in chunks}
+    cache = load_cache(cache_path(directory, include_private))
+    records = []
+    for item in cache.get("records", []):
+        key = (item.get("path"), item.get("index"), item.get("sha"))
+        chunk = current.get(key)
+        vector = item.get("vector")
+        if chunk is not None and isinstance(vector, list):
+            records.append((chunk, [float(value) for value in vector]))
+    pairs = []
+    for left_index, (left, left_vector) in enumerate(records):
+        for right, right_vector in records[left_index + 1:]:
+            if left.path == right.path:
+                continue
+            if target and target not in (left.path, right.path):
+                continue
+            if any(value in left.path and value in right.path for value in exclude):
+                continue
+            if len(left_vector) != len(right_vector):
+                continue
+            score = sum(a * b for a, b in zip(left_vector, right_vector))
+            if score >= threshold:
+                pairs.append({
+                    "score": round(score, 6),
+                    "left": {"path": left.path, "heading": left.heading, "excerpt": left.text[:160]},
+                    "right": {"path": right.path, "heading": right.heading, "excerpt": right.text[:160]},
+                })
+    pairs.sort(key=lambda item: (-item["score"], item["left"]["path"], item["right"]["path"]))
+    return pairs[:limit]
+
+
 def add_common(parser):
     parser.add_argument("--root")
     parser.add_argument("--state-dir")
@@ -272,6 +309,13 @@ def parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--stdin-query", action="store_true")
     search_parser.add_argument("-k", "--limit", type=int, default=5)
     search_parser.add_argument("--json", action="store_true")
+    overlap_parser = sub.add_parser("overlap")
+    add_common(overlap_parser)
+    overlap_parser.add_argument("--threshold", type=float, default=0.90)
+    overlap_parser.add_argument("--limit", type=int, default=20)
+    overlap_parser.add_argument("--target")
+    overlap_parser.add_argument("--exclude", action="append", default=[])
+    overlap_parser.add_argument("--json", action="store_true")
     return root
 
 
@@ -285,6 +329,19 @@ def main(argv=None) -> int:
             if provider is None:
                 raise MemoryError("semantic indexing requires an embedding provider")
             return build_index(root, directory, provider, args.include_private, args.lock_timeout)
+        if args.command == "overlap":
+            results = overlap(root, directory=directory, include_private=args.include_private,
+                              threshold=args.threshold, limit=args.limit, target=args.target,
+                              exclude=args.exclude, lock_timeout=args.lock_timeout)
+            if args.json:
+                print(json.dumps(results, ensure_ascii=False))
+            else:
+                for result in results:
+                    print(f"{result['score']:.3f}")
+                    for side in ("left", "right"):
+                        item = result[side]
+                        print(f"       {item['path']} [{item['heading']}]\n         {item['excerpt']}")
+            return 0
         query = sys.stdin.read().strip() if args.stdin_query else " ".join(args.query).strip()
         if not query:
             raise MemoryError("search query is empty")

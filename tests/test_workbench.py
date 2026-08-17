@@ -12,7 +12,7 @@ from unittest import mock
 from agent_memory_workbench import lifecycle, recall
 from agent_memory_workbench.core import MemoryError, atomic_write, resolve_root, safe_path, validate_timeout
 from agent_memory_workbench.mirror import publish
-from agent_memory_workbench.search import Provider, build_index, cache_path, search, state_dir
+from agent_memory_workbench.search import Provider, build_index, cache_path, overlap, search, state_dir
 
 
 def memory(name, body, *, visibility="public", kind="note"):
@@ -72,10 +72,47 @@ class WorkbenchTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue((self.root / "inbox/public/garden-note.md").exists())
         self.assertEqual(lifecycle.main([
-            "promote", "--root", str(self.root), "inbox/public/garden-note.md", "--to", "active"
+            "promote", "--root", str(self.root), "inbox/public/garden-note.md", "--to", "active",
+            "--reason", "reviewed and approved"
         ]), 0)
         self.assertTrue((self.root / "active/garden-note.md").exists())
         self.assertEqual(lifecycle.main(["doctor", "--root", str(self.root)]), 0)
+        audit = (self.root / ".memory-workbench-audit.jsonl").read_text(encoding="utf-8")
+        self.assertIn('"action": "candidate"', audit)
+        self.assertIn('"action": "promote"', audit)
+
+    def test_doctor_checks_hot_budget_and_memory_links(self):
+        self.write("active/target.md", memory("target", "# Existing heading\n\nBody."))
+        self.write("active/source.md", memory("source", "Related: [[target#Missing heading]]."))
+        self.refresh()
+        (self.root / "MEMORY.md").write_text(
+            "# Memory\n\n- [Missing](active/missing.md) - " + "x" * 220 + "\n",
+            encoding="utf-8",
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(lifecycle.main(["doctor", "--root", str(self.root)]), 1)
+        self.assertIn("dead link", output.getvalue())
+        self.assertIn("maximum is 200", output.getvalue())
+        self.assertIn("broken wiki heading", output.getvalue())
+
+    def test_archive_blocks_hot_link_and_update_records_reason(self):
+        self.write("active/target.md", memory("target", "Old body."))
+        self.refresh()
+        (self.root / "MEMORY.md").write_text(
+            "# Memory\n\n- [Target](active/target.md) - Hot pointer.\n", encoding="utf-8"
+        )
+        self.assertEqual(lifecycle.main([
+            "archive", "--root", str(self.root), "target", "--reason", "superseded"
+        ]), 2)
+        body = self.write("new-body.txt", "New body.")
+        self.assertEqual(lifecycle.main([
+            "update", "--root", str(self.root), "target", "--reason", "corrected evidence",
+            "--body-file", str(body)
+        ]), 0)
+        audit = (self.root / ".memory-workbench-audit.jsonl").read_text(encoding="utf-8")
+        self.assertIn("corrected evidence", audit)
+        self.assertIn("before_sha256", audit)
 
     def test_private_candidate_and_search_are_opt_in(self):
         self.write("active/public.md", memory("public", "The public harbor guide."))
@@ -125,6 +162,16 @@ class WorkbenchTest(unittest.TestCase):
         results = search(self.root, "harbor", directory=self.state, provider=FakeProvider(),
                          include_private=False, limit=5, lock_timeout=1)
         self.assertEqual(results, [])
+
+    def test_overlap_finds_cross_file_near_duplicates(self):
+        self.write("active/harbor-one.md", memory("harbor-one", "Harbor safety checklist."))
+        self.write("active/harbor-two.md", memory("harbor-two", "Harbor safety checklist."))
+        self.refresh()
+        build_index(self.root, self.state, FakeProvider(), False, 1)
+        pairs = overlap(self.root, directory=self.state, include_private=False,
+                        threshold=0.99, limit=5, target=None, exclude=[], lock_timeout=1)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["left"]["path"], "active/harbor-one.md")
 
     def test_atomic_write_preserves_mode(self):
         path = self.root / "mode.txt"

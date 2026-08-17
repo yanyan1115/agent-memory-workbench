@@ -1,23 +1,32 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .core import (
     AREAS,
     GENERATED_MARKER,
+    HEADING_RE,
+    HOT_INDEX_MAX_LINE,
+    MD_LINK_RE,
     MemoryError,
     SLUG_RE,
+    WIKI_RE,
     atomic_write,
     load_memories,
+    markdown_target,
     memory_lock,
     parse_memory,
     render_memory,
     resolve_root,
     safe_path,
     validate_memory,
+    heading_slug,
+    wiki_parts,
 )
 
 
@@ -69,13 +78,55 @@ def collect_issues(root: Path) -> list[str]:
     for memory in memories:
         for issue in validate_memory(memory):
             issues.append(f"{memory.relative}: {issue}")
-        names = [memory.data.get("name"), *memory.data.get("aliases", [])]
+        aliases = memory.data.get("aliases", [])
+        names = [memory.data.get("name"), *(aliases if isinstance(aliases, list) else [])]
         for name in filter(lambda value: isinstance(value, str), names):
             if name in identities:
                 issues.append(f"{memory.relative}: duplicate identity {name} (also {identities[name]})")
             else:
                 identities[name] = memory.relative
+    by_name = {}
+    for memory in memories:
+        aliases = memory.data.get("aliases", [])
+        for identity in [memory.data.get("name"), *(aliases if isinstance(aliases, list) else [])]:
+            if isinstance(identity, str):
+                by_name[identity] = memory
+    for memory in memories:
+        for raw in WIKI_RE.findall(memory.body):
+            name, heading = wiki_parts(raw)
+            target = by_name.get(name)
+            if target is None:
+                issues.append(f"{memory.relative}: broken wiki link: {name}")
+                continue
+            if heading:
+                headings = {heading_slug(value) for value in HEADING_RE.findall(target.body)}
+                if heading_slug(heading) not in headings:
+                    issues.append(f"{memory.relative}: broken wiki heading {heading!r} in {name}")
+    hot_index = root / "MEMORY.md"
+    if not hot_index.is_file():
+        issues.append("MEMORY.md: file is missing")
+    else:
+        text = hot_index.read_text(encoding="utf-8")
+        for raw in MD_LINK_RE.findall(text):
+            target = markdown_target(root, hot_index, raw)
+            if target is not None and not target.exists():
+                issues.append(f"MEMORY.md: dead link: {raw}")
+        for number, line in enumerate(text.splitlines(), 1):
+            if line.startswith("- [") and len(line) > HOT_INDEX_MAX_LINE:
+                issues.append(
+                    f"MEMORY.md: line {number} is {len(line)} chars; maximum is {HOT_INDEX_MAX_LINE}"
+                )
     return issues
+
+
+def hot_index_links_to(root: Path, source: Path) -> bool:
+    hot_index = root / "MEMORY.md"
+    if not hot_index.is_file():
+        return False
+    for raw in MD_LINK_RE.findall(hot_index.read_text(encoding="utf-8")):
+        if markdown_target(root, hot_index, raw) == source:
+            return True
+    return False
 
 
 def cmd_doctor(args) -> int:
@@ -113,6 +164,27 @@ def read_body(args) -> str:
     raise MemoryError("provide --body-file or pipe body text on stdin")
 
 
+def append_audit(root: Path, *, action: str, path: str, reason: str,
+                 before: str | None = None, after: str | None = None) -> None:
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "path": path,
+        "reason": reason,
+    }
+    if before is not None:
+        record["before_sha256"] = before
+    if after is not None:
+        record["after_sha256"] = after
+    audit = root / ".memory-workbench-audit.jsonl"
+    existing = audit.read_text(encoding="utf-8") if audit.exists() else ""
+    atomic_write(audit, existing + json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def body_sha(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def cmd_candidate(args) -> int:
     root = resolve_root(args.root)
     if not SLUG_RE.fullmatch(args.name):
@@ -138,6 +210,8 @@ def cmd_candidate(args) -> int:
         if target.exists():
             raise MemoryError(f"candidate already exists: {target.relative_to(root)}")
         atomic_write(target, render_memory(data, body))
+        append_audit(root, action="candidate", path=target.relative_to(root).as_posix(),
+                     reason=f"candidate created from {args.source}", after=body_sha(body))
     print(target.relative_to(root))
     return 0
 
@@ -158,6 +232,8 @@ def cmd_promote(args) -> int:
         data["visibility"] = "private" if target_area == "private" else "public"
         atomic_write(target, render_memory(data, memory.body))
         source.unlink()
+        append_audit(root, action="promote", path=target.relative_to(root).as_posix(),
+                     reason=args.reason, before=body_sha(memory.body), after=body_sha(memory.body))
         for path, text in expected_indexes(root).items():
             atomic_write(path, text, default_mode=0o644)
     print(target.relative_to(root))
@@ -173,6 +249,8 @@ def cmd_archive(args) -> int:
         memory = matches[0]
         if not memory.relative.startswith("active/"):
             raise MemoryError("only active public memories can be archived")
+        if hot_index_links_to(root, memory.path) and not args.allow_hot_link:
+            raise MemoryError("MEMORY.md links to this memory; remove the hot link or use --allow-hot-link")
         target = root / "archive" / memory.path.name
         if target.exists():
             raise MemoryError(f"destination exists: {target.relative_to(root)}")
@@ -181,9 +259,44 @@ def cmd_archive(args) -> int:
         data["archive_reason"] = args.reason
         atomic_write(target, render_memory(data, memory.body))
         memory.path.unlink()
+        append_audit(root, action="archive", path=target.relative_to(root).as_posix(),
+                     reason=args.reason, before=body_sha(memory.body), after=body_sha(memory.body))
         for path, text in expected_indexes(root).items():
             atomic_write(path, text, default_mode=0o644)
     print(target.relative_to(root))
+    return 0
+
+
+def cmd_update(args) -> int:
+    root = resolve_root(args.root)
+    body = read_body(args)
+    if not body:
+        raise MemoryError("body must not be empty")
+    with memory_lock(root, exclusive=True, timeout=args.lock_timeout):
+        matches = [
+            memory for memory in load_memories(root)
+            if args.name == memory.data.get("name") or args.name in (
+                memory.data.get("aliases") if isinstance(memory.data.get("aliases"), list) else []
+            )
+        ]
+        if len(matches) != 1:
+            raise MemoryError(f"expected one memory named {args.name}, found {len(matches)}")
+        memory = matches[0]
+        data = dict(memory.data)
+        data["updated"] = date.today().isoformat()
+        atomic_write(memory.path, render_memory(data, body))
+        append_audit(root, action="update", path=memory.relative, reason=args.reason,
+                     before=body_sha(memory.body), after=body_sha(body))
+    print(memory.relative)
+    return 0
+
+
+def cmd_audit(args) -> int:
+    root = resolve_root(args.root)
+    audit = root / ".memory-workbench-audit.jsonl"
+    with memory_lock(root, exclusive=False, timeout=args.lock_timeout):
+        if audit.exists():
+            sys.stdout.write(audit.read_text(encoding="utf-8"))
     return 0
 
 
@@ -214,11 +327,20 @@ def parser() -> argparse.ArgumentParser:
     promote = sub.add_parser("promote", parents=[common])
     promote.add_argument("path")
     promote.add_argument("--to", choices=("active", "private"), required=True)
+    promote.add_argument("--reason", required=True)
     promote.set_defaults(func=cmd_promote)
     archive = sub.add_parser("archive", parents=[common])
     archive.add_argument("name")
     archive.add_argument("--reason", required=True)
+    archive.add_argument("--allow-hot-link", action="store_true")
     archive.set_defaults(func=cmd_archive)
+    update = sub.add_parser("update", parents=[common])
+    update.add_argument("name")
+    update.add_argument("--reason", required=True)
+    update.add_argument("--body-file")
+    update.set_defaults(func=cmd_update)
+    audit = sub.add_parser("audit", parents=[common])
+    audit.set_defaults(func=cmd_audit)
     return root
 
 

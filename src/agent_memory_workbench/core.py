@@ -8,6 +8,7 @@ import re
 import stat
 import tempfile
 import time
+from urllib.parse import unquote
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -18,6 +19,10 @@ import yaml
 AREAS = ("active", "archive", "private")
 GENERATED_MARKER = "<!-- memory-workbench:generated; do not edit -->"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
+WIKI_RE = re.compile(r"\[\[([^\]]+)\]\]")
+MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
+HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+HOT_INDEX_MAX_LINE = 200
 
 
 class MemoryError(RuntimeError):
@@ -193,9 +198,37 @@ def validate_memory(memory: Memory) -> list[str]:
             issues.append(f"{field} must be a list of strings")
     if not memory.body:
         issues.append("body must not be empty")
+    expected_name = memory.path.stem.replace("_", "-")
+    if isinstance(name, str) and name != expected_name:
+        issues.append(f"name must match filename: expected {expected_name}")
     is_private_path = memory.relative.startswith("private/") or memory.relative.startswith("inbox/private/")
     if is_private_path and data.get("visibility") != "private":
         issues.append("private paths require visibility: private")
     if not is_private_path and data.get("visibility") == "private":
         issues.append("private memories must live under private/")
     return issues
+
+
+def heading_slug(value: str) -> str:
+    value = re.sub(r"[`*_~]", "", value.strip().lower())
+    value = re.sub(r"[^\w\-\s]", "", value, flags=re.UNICODE)
+    return re.sub(r"[\s_]+", "-", value).strip("-")
+
+
+def wiki_parts(raw: str) -> tuple[str, str | None]:
+    target = raw.split("|", 1)[0].strip()
+    if "#" in target:
+        name, heading = target.split("#", 1)
+        return name.strip(), unquote(heading.strip())
+    return target, None
+
+
+def markdown_target(root: Path, source: Path, raw: str) -> Path | None:
+    target = raw.strip().split(maxsplit=1)[0].strip("<>")
+    if not target or target.startswith(("#", "http://", "https://", "mailto:")):
+        return None
+    target = unquote(target.split("#", 1)[0])
+    try:
+        return safe_path(root, source.parent / target)
+    except MemoryError:
+        return Path("/__invalid_root_escape__")

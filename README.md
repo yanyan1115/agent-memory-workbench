@@ -28,6 +28,10 @@ Core principles:
 
 - `memoryctl`: initialize, validate, index, stage, promote, and archive memories.
 - `memsearch`: lexical search plus optional Gemini or OpenAI-compatible embeddings.
+- Hard 200-character hot-index budget, dead-link checks, wiki links, and heading validation.
+- Hierarchical navigation through a hot index, generated area indexes, domain hubs, and skills.
+- Reasoned updates and a hash-only lifecycle audit trail.
+- Vector overlap detection for duplicate or conflicting memories.
 - `memory-recall`: safe adapter for message gateways.
 - `memory-mirror`: validated immutable read-only fallback releases.
 - NFSv4-over-SSH deployment guidance for one authority across multiple hosts.
@@ -58,7 +62,8 @@ memoryctl candidate --root ./memory \
   --body-file /tmp/body.md
 
 memoryctl promote --root ./memory \
-  inbox/public/release-checklist.md --to active
+  inbox/public/release-checklist.md --to active \
+  --reason 'Reviewed and approved'
 memoryctl doctor --root ./memory
 memsearch search --root ./memory 'release validation'
 ```
@@ -103,6 +108,25 @@ memory/
 `active/INDEX.md`, `archive/INDEX.md`, and `private/INDEX.md` are generated.
 Never edit them manually.
 
+`memoryctl doctor` checks schema, duplicate identities, filename/name agreement,
+stale generated indexes, dead hot-index links, the 200-character hot-index line
+budget, wiki-link targets, and wiki heading anchors.
+
+Use explicit reasons for edits and review the content-free audit trail:
+
+```bash
+memoryctl update --root ./memory release-checklist \
+  --body-file ./revised.md \
+  --reason 'Corrected the release evidence'
+memoryctl audit --root ./memory
+```
+
+After semantic indexing, inspect high-similarity cross-file chunks:
+
+```bash
+memsearch overlap --root ./memory --threshold 0.90
+```
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
@@ -112,6 +136,7 @@ Never edit them manually.
 - [Cross-host NFSv4 over SSH](docs/deployment/nfs-over-ssh.md)
 - [Agent memory skill template](docs/memory-skill-template.md)
 - [Security policy](SECURITY.md)
+- [Contributors](CONTRIBUTORS.md)
 
 ## Tests
 
@@ -121,7 +146,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 
 ## Project Status
 
-Version `0.1.0` is a conservative reference implementation. It intentionally
+Version `0.2.0` is a conservative reference implementation. It intentionally
 does not automate memory extraction from complete transcripts or perform
 automatic conflict resolution. Those are judgment-heavy operations and should
 remain reviewable.
