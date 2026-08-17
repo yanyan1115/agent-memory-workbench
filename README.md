@@ -2,10 +2,15 @@
 
 Auditable, file-first memory infrastructure for AI agents.
 
-Agent Memory Workbench keeps durable memory in ordinary Markdown. It adds a
-review inbox, deterministic indexes, hybrid lexical/vector search, bounded
-optional recall, cross-process locking, and validated read-only mirrors without
-turning an opaque database into the source of truth.
+An agent should not need to search its own archive before it can say, "I
+remember." The small set of facts and rules that matter at startup should
+already be present. Search should be reserved for details.
+
+Agent Memory Workbench is not another attempt to make retrieval the center of
+memory. It is a layered, auditable architecture for maintaining memory over
+time: durable Markdown records, a compact hot index, reviewable admission,
+hierarchical navigation, optional hybrid retrieval, integrity checks, and safe
+cross-host operation.
 
 ## Why
 
@@ -24,15 +29,40 @@ Core principles:
 - Multiple writers share one lock domain; network failure degrades read-only.
 - Automatic recall is optional, bounded, untrusted, and fail-open.
 
-## Features
+## How It Works
+
+### Admit new memory deliberately
+
+- New information enters an inbox before it becomes formal memory.
+- A human or agent reviews and promotes useful candidates; low-value material
+  can be discarded instead of silently becoming permanent context.
+
+### Know the important things at startup
+
+- `MEMORY.md` is a lightweight hot index suitable for startup loading. Each
+  pointer keeps only a useful hook, with a hard 200-character line budget.
+- The hot index, generated area indexes, domain hubs, and optional skills form
+  a navigable tree. Validated wiki links can connect related memories directly.
+- High-frequency rules whose omission would be costly can live in skills and
+  use skill descriptions as low-noise recall triggers. Lower-frequency facts
+  remain in Markdown and are opened only when needed.
+
+### Retrieve details when needed
+
+- `memsearch` combines lexical search with optional Gemini or OpenAI-compatible
+  embeddings. Markdown remains authoritative and lexical search works without
+  an API or vector cache.
+- `memory-recall` is an optional message-gateway adapter with time, size, and
+  fail-open bounds. The workbench remains fully usable without it.
+- Vector overlap review surfaces memories that may duplicate or contradict one
+  another. Similarity is evidence for review, never automatic permission to
+  merge or delete.
+
+### Keep the library healthy
 
 - `memoryctl`: initialize, validate, index, stage, promote, and archive memories.
-- `memsearch`: lexical search plus optional Gemini or OpenAI-compatible embeddings.
 - Hard 200-character hot-index budget, dead-link checks, wiki links, and heading validation.
-- Hierarchical navigation through a hot index, generated area indexes, domain hubs, and skills.
 - Reasoned updates and a hash-only lifecycle audit trail.
-- Vector overlap detection for duplicate or conflicting memories.
-- `memory-recall`: safe adapter for message gateways.
 - `memory-mirror`: validated immutable read-only fallback releases.
 - NFSv4-over-SSH deployment guidance for one authority across multiple hosts.
 - Offline `unittest` suite with privacy and stale-cache regressions.
@@ -137,6 +167,22 @@ memsearch overlap --root ./memory --threshold 0.90
 - [Agent memory skill template](docs/memory-skill-template.md)
 - [Security policy](SECURITY.md)
 - [Contributors](CONTRIBUTORS.md)
+
+## Origins
+
+This architecture grew out of long-running real-world iteration by Cora,
+Claude, and South. Cora set and continuously corrected the architectural
+direction, then pushed the private practice toward an open-source release.
+Claude helped evolve the memory library, Memory skill, hot-index budget,
+low-noise recall, inbox, hierarchical hubs, doctor, and overlap workflows.
+South reconciled the implementations and completed the public architecture
+audit, privacy review, code, tests, documentation, and release. See
+[CONTRIBUTORS.md](CONTRIBUTORS.md) for the full attribution.
+
+Using skills for selectively loaded long-term rules was inspired by a
+second-hand description of Codex Desktop's native memory behavior; no Codex
+source code was consulted. Treating the skill description itself as the recall
+trigger is this project's own design.
 
 ## Tests
 
