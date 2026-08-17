@@ -1,5 +1,7 @@
 # Agent Memory Workbench
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Auditable, file-first memory infrastructure for AI agents.
 
 An agent should not need to search its own archive before it can say, "I
