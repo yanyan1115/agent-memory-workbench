@@ -1,0 +1,18 @@
+[Unit]
+Description=Agent memory NFS reverse SSH tunnel
+After=network-online.target nfs-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<dedicated-local-user>
+ExecStart=/usr/bin/ssh -NT -i <private-key-path> -o BatchMode=yes -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:<tunnel-port>:127.0.0.1:2049 <tunnel-user>@<client-host>
+Restart=always
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

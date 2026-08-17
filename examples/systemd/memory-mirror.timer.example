@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically publish an agent memory fallback mirror
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

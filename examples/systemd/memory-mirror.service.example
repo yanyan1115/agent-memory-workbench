@@ -1,0 +1,15 @@
+[Unit]
+Description=Publish validated read-only agent memory mirror
+RequiresMountsFor=<canonical-memory-path>
+After=<canonical-memory-mount-unit>
+
+[Service]
+Type=oneshot
+User=<memory-service-user>
+ExecStart=<virtualenv-path>/bin/memory-mirror --root <canonical-memory-path> --destination <fallback-release-path> --keep 3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=<canonical-memory-path>
+ReadWritePaths=<fallback-release-path>
